@@ -1,0 +1,53 @@
+name: data_observability
+version: "1.0.0"
+config-version: 2
+
+profile: snowflake_observability
+
+# Path configs
+model-paths: ["models"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+analysis-paths: ["analyses"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+# Model materialisation defaults per layer
+models:
+  data_observability:
+    bronze:
+      +materialized: table
+      +schema: BRONZE
+      +tags: ["bronze", "raw"]
+    silver:
+      +materialized: table
+      +schema: SILVER
+      +tags: ["silver", "staging"]
+      +on_schema_change: "sync_all_columns"
+    gold:
+      +materialized: table
+      +schema: GOLD
+      +tags: ["gold", "analytics"]
+
+# Seed configs
+seeds:
+  data_observability:
+    +schema: OBSERVABILITY
+
+# Snapshot configs
+snapshots:
+  data_observability:
+    +target_schema: OBSERVABILITY
+    +strategy: timestamp
+    +updated_at: updated_at
+
+# Variables
+vars:
+  # Override at runtime: dbt run --vars '{"start_date": "2026-01-01"}'
+  start_date: "2026-01-01"
+  bronze_schema: "BRONZE"
+  silver_schema: "SILVER"
+  gold_schema: "GOLD"
+  observability_schema: "OBSERVABILITY"

@@ -1,0 +1,107 @@
+# ─── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.installed.cfg
+.Python
+pip-wheel-metadata/
+share/python-wheels/
+*.pyo
+*.pyd
+
+# ─── Virtual Environments ────────────────────────────────────────────────────
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.python-version
+
+# ─── Environment & Secrets ───────────────────────────────────────────────────
+.env.dev
+.env.staging
+.env.prod
+.env.local
+secrets/
+*.pem
+*.key
+*.crt
+
+# ─── IDE ─────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ─── Testing & Coverage ──────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.coveragerc
+junit*.xml
+test-results/
+
+# ─── Ruff / Mypy ─────────────────────────────────────────────────────────────
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ─── Docker ──────────────────────────────────────────────────────────────────
+docker-compose.override.yml
+
+# ─── Airflow ─────────────────────────────────────────────────────────────────
+airflow/logs/
+airflow/airflow.db
+airflow/airflow.cfg
+airflow/webserver_config.py
+airflow/standalone_admin_password.txt
+
+# ─── dbt ─────────────────────────────────────────────────────────────────────
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+dbt/.user.yml
+
+# ─── Great Expectations ──────────────────────────────────────────────────────
+config/great_expectations/uncommitted/
+config/great_expectations/validations/
+
+# ─── Jupyter ─────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ─── Data Files ──────────────────────────────────────────────────────────────
+*.csv
+*.json
+*.parquet
+*.xlsx
+*.xls
+data/
+raw_data/
+sample_data/
+
+# ─── Logs ────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ─── OS Files ────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db

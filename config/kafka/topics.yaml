@@ -1,0 +1,41 @@
+# Kafka Topic Definitions
+# -----------------------
+# All topics used by the DataObservability-AI platform.
+# Applied at container startup by the kafka-init service.
+
+topics:
+  - name: raw.data.events
+    partitions: 6
+    replication_factor: 1
+    retention_ms: 604800000         # 7 days
+    description: "Raw ingested records from CSV/JSON sources"
+
+  - name: schema.events
+    partitions: 2
+    replication_factor: 1
+    retention_ms: 2592000000        # 30 days
+    description: "Schema change notifications (ADD/DROP/MODIFY columns)"
+
+  - name: quality.events
+    partitions: 4
+    replication_factor: 1
+    retention_ms: 1209600000        # 14 days
+    description: "Data quality check results from Quality Agent"
+
+  - name: drift.events
+    partitions: 2
+    replication_factor: 1
+    retention_ms: 2592000000        # 30 days
+    description: "Drift detection results from Drift Agent"
+
+  - name: cost.events
+    partitions: 2
+    replication_factor: 1
+    retention_ms: 7776000000        # 90 days
+    description: "Cost monitoring alerts from Cost Agent"
+
+  - name: heal.commands
+    partitions: 2
+    replication_factor: 1
+    retention_ms: 259200000         # 3 days
+    description: "Self-healing commands from Self-Healing Agent"

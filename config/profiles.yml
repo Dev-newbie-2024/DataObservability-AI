@@ -1,0 +1,51 @@
+# dbt profiles.yml
+# -----------------
+# Snowflake connection profile for dbt.
+# Credentials are read from environment variables — never hardcode here.
+# This file lives at config/profiles.yml (referenced by --profiles-dir config/)
+#
+# Usage:
+#   dbt run --profiles-dir config/ --target dev
+#   dbt run --profiles-dir config/ --target prod
+
+snowflake_observability:
+  target: "{{ env_var('DBT_TARGET', 'dev') }}"
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE', 'SYSADMIN') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE', 'OBSERVABILITY_DB') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'COMPUTE_WH') }}"
+      schema: SILVER       # Default schema (overridden per model via +schema)
+      threads: 4
+      client_session_keep_alive: false
+      query_tag: "dbt_dev"
+
+    staging:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE', 'SYSADMIN') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE', 'OBSERVABILITY_DB') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'COMPUTE_WH') }}"
+      schema: SILVER
+      threads: 8
+      client_session_keep_alive: false
+      query_tag: "dbt_staging"
+
+    prod:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE', 'SYSADMIN') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE', 'OBSERVABILITY_DB') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'COMPUTE_WH') }}"
+      schema: SILVER
+      threads: 16
+      client_session_keep_alive: true
+      query_tag: "dbt_prod"
