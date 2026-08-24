@@ -1,8 +1,18 @@
 """
 backend/main.py
 ===============
-FastAPI application entry point.
-Placeholder — full router implementation in Phase 2.
+FastAPI application factory and entry point.
+
+Startup sequence:
+  1. Configure structured logging.
+  2. Initialise Snowflake connection pool.
+  3. Initialise Kafka producer.
+  4. Register all routers.
+  5. Register custom exception handlers.
+
+Shutdown sequence:
+  1. Flush and close Kafka producer.
+  2. Close Snowflake connection pool.
 """
 
 from __future__ import annotations
@@ -12,102 +22,174 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
+from backend.core.database import close_pool, initialise_pool
+from backend.core.exceptions import (
+    DatasetAlreadyExistsError,
+    DatasetNotFoundError,
+    EmptyFileError,
+    ObservabilityError,
+    SchemaInferenceError,
+    UnsupportedFileTypeError,
+    dataset_exists_handler,
+    dataset_not_found_handler,
+    observability_error_handler,
+    unsupported_file_handler,
+)
+from backend.core.kafka_producer import get_producer
+from backend.routers import datasets, health, upload
 from config.logging_config import configure_logging, get_logger
 from config.settings import settings
 
-# Configure structured logging at startup
+# ─── Configure structured logging first ──────────────────────────────────────
 configure_logging()
 logger = get_logger(__name__)
 
 
+# ─── Lifespan ─────────────────────────────────────────────────────────────────
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Application lifespan: startup and shutdown hooks."""
+    """
+    Manage all startup and shutdown side-effects.
+
+    Startup failures for non-critical services (Kafka) are logged as warnings
+    rather than crashing the process — the API remains available for read operations.
+    """
     logger.info(
-        "Backend starting",
-        app_name=settings.app_name,
+        "DataObservability-AI backend starting",
         version=settings.app_version,
-        env=settings.app_env,
-    )
-    yield
-    logger.info("Backend shutting down")
-
-
-app = FastAPI(
-    title="DataObservability-AI API",
-    description=(
-        "Dataset-Agnostic, Cost-Aware and Self-Healing Data Observability Platform. "
-        "VTU Major Project — Dept. of ISE, 2025-2026."
-    ),
-    version=settings.app_version,
-    docs_url="/docs",
-    redoc_url="/redoc",
-    lifespan=lifespan,
-)
-
-# ─── CORS ────────────────────────────────────────────────────────────────────
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"] if settings.is_development else ["http://dashboard:8501"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-# ─── Health & Status Endpoints ────────────────────────────────────────────────
-
-@app.get("/health", tags=["System"])
-async def health_check() -> JSONResponse:
-    """Liveness probe — returns 200 if the API is running."""
-    return JSONResponse(
-        content={
-            "status": "healthy",
-            "service": "backend",
-            "version": settings.app_version,
-            "env": settings.app_env,
-        }
+        environment=settings.app_env,
     )
 
+    # ── Snowflake pool ────────────────────────────────────────────────────────
+    try:
+        initialise_pool()
+        logger.info("Snowflake connection pool ready")
+    except Exception as exc:
+        logger.error(
+            "Snowflake pool init failed — write endpoints will return 503",
+            error=str(exc),
+        )
 
-@app.get("/ready", tags=["System"])
-async def readiness_check() -> JSONResponse:
-    """Readiness probe — checks external dependency connectivity."""
-    checks: dict[str, str] = {}
+    # ── Kafka producer ────────────────────────────────────────────────────────
+    try:
+        get_producer().initialise()
+        logger.info("Kafka producer ready")
+    except Exception as exc:
+        logger.warning(
+            "Kafka producer init failed — events will be dropped",
+            error=str(exc),
+        )
 
-    # Snowflake check (placeholder — implement in Phase 2)
-    checks["snowflake"] = "not_checked"
-
-    # Kafka check (placeholder — implement in Phase 2)
-    checks["kafka"] = "not_checked"
-
-    all_ready = all(v != "unreachable" for v in checks.values())
-    return JSONResponse(
-        status_code=200 if all_ready else 503,
-        content={"status": "ready" if all_ready else "degraded", "checks": checks},
+    logger.info(
+        "Backend ready",
+        docs=f"http://{settings.backend_host}:{settings.backend_port}/docs",
     )
 
+    yield  # ← application runs here
 
-@app.get("/", tags=["System"])
-async def root() -> JSONResponse:
-    """API root — returns service info."""
-    return JSONResponse(
-        content={
-            "service": settings.app_name,
-            "version": settings.app_version,
-            "docs": "/docs",
-            "health": "/health",
-        }
+    # ── Shutdown ──────────────────────────────────────────────────────────────
+    logger.info("Backend shutting down — draining connections")
+    try:
+        get_producer().close()
+    except Exception as exc:
+        logger.warning("Kafka producer close error", error=str(exc))
+    try:
+        close_pool()
+    except Exception as exc:
+        logger.warning("Snowflake pool close error", error=str(exc))
+    logger.info("Backend shutdown complete")
+
+
+# ─── Application Factory ──────────────────────────────────────────────────────
+
+def create_app() -> FastAPI:
+    """Build and return the FastAPI application instance."""
+
+    app = FastAPI(
+        title="DataObservability-AI API",
+        description=(
+            "**Dataset-Agnostic, Cost-Aware and Self-Healing Data Observability Platform**\n\n"
+            "VTU Major Project — Dept. of ISE, 2025-2026.\n\n"
+            "### Endpoints\n"
+            "- `POST /api/v1/upload` — Upload CSV/JSON and ingest to Snowflake Bronze\n"
+            "- `GET  /api/v1/datasets` — List all registered datasets\n"
+            "- `GET  /api/v1/datasets/{id}` — Get dataset detail with current schema\n"
+            "- `GET  /health` — Liveness probe\n"
+            "- `GET  /ready`  — Readiness probe (Snowflake + Kafka checks)\n"
+        ),
+        version=settings.app_version,
+        docs_url="/docs",
+        redoc_url="/redoc",
+        openapi_url="/openapi.json",
+        lifespan=lifespan,
+        contact={
+            "name": "VTU ISE Project Team",
+            "url": "https://github.com/your-org/DataObservability-AI",
+        },
+        license_info={"name": "MIT"},
     )
 
+    # ─── Middleware ───────────────────────────────────────────────────────────
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=(
+            ["*"] if settings.is_development
+            else ["http://dashboard:8501", "http://localhost:8501"]
+        ),
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["*"],
+    )
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
 
-# ─── Placeholder routers (wired in Phase 2) ───────────────────────────────────
-# from backend.routers import datasets, pipelines, quality, drift, cost, alerts
-# app.include_router(datasets.router, prefix="/api/v1/datasets", tags=["Datasets"])
-# app.include_router(pipelines.router, prefix="/api/v1/pipelines", tags=["Pipelines"])
-# app.include_router(quality.router,   prefix="/api/v1/quality",   tags=["Quality"])
-# app.include_router(drift.router,     prefix="/api/v1/drift",     tags=["Drift"])
-# app.include_router(cost.router,      prefix="/api/v1/cost",      tags=["Cost"])
-# app.include_router(alerts.router,    prefix="/api/v1/alerts",    tags=["Alerts"])
+    # ─── Exception Handlers ───────────────────────────────────────────────────
+    app.add_exception_handler(DatasetNotFoundError, dataset_not_found_handler)        # type: ignore[arg-type]
+    app.add_exception_handler(DatasetAlreadyExistsError, dataset_exists_handler)      # type: ignore[arg-type]
+    app.add_exception_handler(UnsupportedFileTypeError, unsupported_file_handler)     # type: ignore[arg-type]
+    app.add_exception_handler(ObservabilityError, observability_error_handler)        # type: ignore[arg-type]
+
+    # ─── Routers ─────────────────────────────────────────────────────────────
+    # System (no prefix)
+    app.include_router(health.router)
+
+    # API v1 (prefixed)
+    API_PREFIX = "/api/v1"
+    app.include_router(upload.router,   prefix=API_PREFIX)
+    app.include_router(datasets.router, prefix=API_PREFIX)
+
+    # ─── Root redirect ────────────────────────────────────────────────────────
+    @app.get("/", include_in_schema=False)
+    async def root() -> JSONResponse:
+        return JSONResponse(
+            content={
+                "service": settings.app_name,
+                "version": settings.app_version,
+                "environment": settings.app_env,
+                "docs": "/docs",
+                "health": "/health",
+                "api": "/api/v1",
+            }
+        )
+
+    return app
+
+
+# ─── Entry Point ──────────────────────────────────────────────────────────────
+
+app = create_app()
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "backend.main:app",
+        host=settings.backend_host,
+        port=settings.backend_port,
+        reload=settings.backend_reload,
+        workers=settings.backend_workers,
+        log_level=settings.log_level.lower(),
+    )
