@@ -1,0 +1,29 @@
+# Normalise all text files to LF in the repository
+* text=auto eol=lf
+
+# Explicit binary files — never transform
+*.pdf    binary
+*.pptx   binary
+*.png    binary
+*.jpg    binary
+*.gif    binary
+*.ico    binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
+*.eot    binary
+
+# Dockerfile (no extension) — treat as text
+Dockerfile text eol=lf
+
+# Shell scripts always LF
+*.sh text eol=lf
+
+# SQL
+*.sql text eol=lf
+
+# YAML / TOML / JSON
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
