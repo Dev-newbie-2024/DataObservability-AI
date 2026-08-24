@@ -35,7 +35,8 @@ except ImportError:
     _KAFKA_AVAILABLE = False
     _ConfluentProducer = None  # type: ignore[assignment,misc]
     KafkaException = Exception  # type: ignore[assignment,misc]
-    logger.warning("confluent-kafka not installed — Kafka publishing disabled")
+    print("[kafka_producer.py] WARNING: confluent-kafka not installed — Kafka publishing disabled")
+
 
 
 # ─── Delivery Callback ────────────────────────────────────────────────────────

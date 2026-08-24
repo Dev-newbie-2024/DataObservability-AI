@@ -7,7 +7,24 @@ Shared pytest fixtures for all test layers.
 from __future__ import annotations
 
 import os
-import pytest
+
+# Configure logging BEFORE any backend imports to avoid structlog PrintLogger issues
+os.environ.setdefault("APP_ENV", "development")
+os.environ.setdefault("SNOWFLAKE_ACCOUNT", "test_account.us-east-1")
+os.environ.setdefault("SNOWFLAKE_USER", "test_user")
+os.environ.setdefault("SNOWFLAKE_PASSWORD", "test_password")
+os.environ.setdefault("SNOWFLAKE_DATABASE", "TEST_DB")
+os.environ.setdefault("SNOWFLAKE_WAREHOUSE", "TEST_WH")
+os.environ.setdefault("SNOWFLAKE_ROLE", "SYSADMIN")
+os.environ.setdefault("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+os.environ.setdefault("LOG_LEVEL", "WARNING")
+
+from config.logging_config import configure_logging  # noqa: E402
+
+configure_logging()
+
+import pytest  # noqa: E402
+
 
 
 # ─── Set test environment variables before any imports ───────────────────────

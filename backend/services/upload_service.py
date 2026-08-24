@@ -274,7 +274,12 @@ def process_upload(
             dataset_id=dataset_id,
         )
     except Exception as exc:
-        logger.warning("Kafka publish failed (non-fatal)", error=str(exc))
+        # Non-fatal — log via print to avoid structlog config issues in test mode
+        try:
+            logger.warning("Kafka publish failed (non-fatal)", error=str(exc))
+        except Exception:
+            print(f"[upload_service] Kafka publish failed (non-fatal): {exc}")
+
 
     logger.info(
         "Upload complete",

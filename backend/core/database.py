@@ -21,14 +21,22 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
-import snowflake.connector
-from snowflake.connector import DictCursor, SnowflakeConnection
-
 from backend.core.exceptions import SnowflakeConnectionError, SnowflakeQueryError
 from config.logging_config import get_logger
 from config.settings import snowflake_settings
 
 logger = get_logger(__name__)
+
+try:
+    import snowflake.connector
+    from snowflake.connector import DictCursor, SnowflakeConnection
+    _SNOWFLAKE_AVAILABLE = True
+except ImportError:
+    _SNOWFLAKE_AVAILABLE = False
+    DictCursor = None           # type: ignore[assignment,misc]
+    SnowflakeConnection = None  # type: ignore[assignment,misc]
+    print("[database.py] WARNING: snowflake-connector-python not installed — DB operations will fail at runtime")
+
 
 # ─── Connection Pool ──────────────────────────────────────────────────────────
 
@@ -72,8 +80,13 @@ class SnowflakePool:
                     detail=str(exc),
                 ) from exc
 
-    def _new_connection(self) -> SnowflakeConnection:
+    def _new_connection(self) -> "SnowflakeConnection":
         """Open a fresh connection using current settings."""
+        if not _SNOWFLAKE_AVAILABLE:
+            raise SnowflakeConnectionError(
+                message="snowflake-connector-python is not installed",
+                detail="Install it with: pip install snowflake-connector-python",
+            )
         return snowflake.connector.connect(
             account=snowflake_settings.account,
             user=snowflake_settings.user,

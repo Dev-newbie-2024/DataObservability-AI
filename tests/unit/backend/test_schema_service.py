@@ -15,7 +15,6 @@ from backend.services.schema_service import (
     compute_fingerprint,
     detect_schema_changes,
     infer_schema,
-    _clean_col_name,
     _pandas_dtype_to_snowflake,
 )
 from backend.core.exceptions import SchemaInferenceError
