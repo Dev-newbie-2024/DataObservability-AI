@@ -13,6 +13,7 @@ All public functions:
 Import pattern::
 
     from dashboard.utils.snowflake_queries import (
+        # Page 1 — Executive Overview
         get_pipeline_run_stats,
         get_latest_quality_score,
         get_latest_drift_severity,
@@ -20,6 +21,19 @@ Import pattern::
         get_self_healing_success_rate,
         get_overall_health,
         get_quality_trend,
+        # Page 2 — Pipeline Monitoring
+        get_pipeline_kpis,
+        get_recent_dag_runs,
+        get_pipeline_duration_trend,
+        get_pipeline_task_timeline,
+        get_lineage_summary,
+        get_pipeline_layer_stats,
+        # Page 3 — Data Quality Dashboard
+        get_quality_datasets,
+        get_quality_kpis,
+        get_quality_score_trend,
+        get_quality_run_history,
+        get_quality_column_metrics,
     )
 
 Snowflake tables read
@@ -28,6 +42,8 @@ Snowflake tables read
   - OBSERVABILITY.PIPELINE_TASKS
   - OBSERVABILITY.DATASET_LINEAGE
   - OBSERVABILITY.DATA_QUALITY_METRICS
+  - OBSERVABILITY.QUALITY_RUNS
+  - OBSERVABILITY.QUALITY_METRICS
   - OBSERVABILITY.DRIFT_SUMMARY
   - OBSERVABILITY.COST_SUMMARY
   - OBSERVABILITY.HEAL_SUMMARY
