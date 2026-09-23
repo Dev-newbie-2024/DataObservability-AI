@@ -1,14 +1,17 @@
 """
 backend/core/exceptions.py
 ===========================
-Custom exception classes and FastAPI exception handlers.
-All domain-specific errors are defined here and mapped to HTTP responses.
+Framework-agnostic domain exception classes.
+
+All platform errors are plain Python exceptions so this module can be
+imported by any layer (Airflow DAGs, CLI scripts, FastAPI, tests) without
+requiring FastAPI to be installed.
+
+FastAPI-specific HTTP exception handlers live in ``backend.main`` where
+FastAPI is always present.
 """
 
 from __future__ import annotations
-
-from fastapi import Request, status
-from fastapi.responses import JSONResponse
 
 
 # ─── Domain Exceptions ────────────────────────────────────────────────────────
@@ -70,45 +73,3 @@ class EmptyFileError(ObservabilityError):
 
 class SchemaInferenceError(ObservabilityError):
     """Raised when schema cannot be inferred from the uploaded file."""
-
-
-# ─── FastAPI Exception Handlers ───────────────────────────────────────────────
-
-def _error_body(error_type: str, message: str, detail: str) -> dict:
-    return {"error": error_type, "message": message, "detail": detail}
-
-
-async def dataset_not_found_handler(
-    request: Request, exc: DatasetNotFoundError
-) -> JSONResponse:
-    return JSONResponse(
-        status_code=status.HTTP_404_NOT_FOUND,
-        content=_error_body("DatasetNotFound", exc.message, exc.detail),
-    )
-
-
-async def dataset_exists_handler(
-    request: Request, exc: DatasetAlreadyExistsError
-) -> JSONResponse:
-    return JSONResponse(
-        status_code=status.HTTP_409_CONFLICT,
-        content=_error_body("DatasetAlreadyExists", exc.message, exc.detail),
-    )
-
-
-async def unsupported_file_handler(
-    request: Request, exc: UnsupportedFileTypeError
-) -> JSONResponse:
-    return JSONResponse(
-        status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-        content=_error_body("UnsupportedFileType", exc.message, exc.detail),
-    )
-
-
-async def observability_error_handler(
-    request: Request, exc: ObservabilityError
-) -> JSONResponse:
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content=_error_body("PlatformError", exc.message, exc.detail),
-    )

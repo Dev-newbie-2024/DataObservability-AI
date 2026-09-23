@@ -30,6 +30,8 @@ SQL_MIGRATIONS = [
     "006_create_alert_tables.sql",
     "007_create_agent_sessions.sql",
     "008_create_lineage_edges.sql",
+    "009_create_dataset_lineage.sql",
+    "010_create_data_quality_metrics.sql",
 ]
 
 

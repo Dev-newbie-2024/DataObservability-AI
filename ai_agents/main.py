@@ -38,7 +38,7 @@ async def health() -> JSONResponse:
                 "cost_agent",
                 "self_healing_agent",
             ],
-            "phase": "1-scaffold",
+            "phase": "4D-all-agents-active",
         }
     )
 
@@ -51,23 +51,27 @@ def run_schema_agent() -> None:
 
 
 def run_quality_agent() -> None:
-    """Quality Agent — runs GX checkpoints. Phase 3."""
-    logger.info("Quality Agent initialised (stub)", phase=1)
+    """Quality Agent — runs GX checkpoints. Phase 4."""
+    from ai_agents.quality_agent.quality_agent import start_consumer_loop
+    start_consumer_loop()
 
 
 def run_drift_agent() -> None:
-    """Drift Agent — runs Evidently reports. Phase 3."""
-    logger.info("Drift Agent initialised (stub)", phase=1)
+    """Drift Agent — runs Evidently reports. Phase 4B."""
+    from ai_agents.drift_agent.drift_agent import start_consumer_loop
+    start_consumer_loop()
 
 
 def run_cost_agent() -> None:
-    """Cost Agent — monitors Snowflake credits. Phase 4."""
-    logger.info("Cost Agent initialised (stub)", phase=1)
+    """Cost Agent — monitors Snowflake credits. Phase 4C."""
+    from ai_agents.cost_agent.cost_agent import start_consumer_loop
+    start_consumer_loop()
 
 
 def run_self_healing_agent() -> None:
-    """Self-Healing Agent — processes heal.commands. Phase 3."""
-    logger.info("Self-Healing Agent initialised (stub)", phase=1)
+    """Self-Healing Agent — processes heal.commands. Phase 4D."""
+    from ai_agents.self_healing_agent.self_healing_agent import start_consumer_loop
+    start_consumer_loop()
 
 
 if __name__ == "__main__":

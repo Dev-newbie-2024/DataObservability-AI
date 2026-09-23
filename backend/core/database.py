@@ -101,13 +101,21 @@ class SnowflakePool:
             client_session_keep_alive=True,
         )
 
-    def _is_alive(self, conn: SnowflakeConnection) -> bool:
+    def _is_alive(self, conn: "SnowflakeConnection") -> bool:
         """Return True if the connection is still usable."""
+        cur = None
         try:
-            conn.cursor().execute("SELECT 1")
+            cur = conn.cursor()
+            cur.execute("SELECT 1")
             return True
         except Exception:
             return False
+        finally:
+            if cur is not None:
+                try:
+                    cur.close()
+                except Exception:
+                    pass
 
     @contextmanager
     def acquire(self) -> Generator[SnowflakeConnection, None, None]:

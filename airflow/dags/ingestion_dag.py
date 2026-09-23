@@ -210,7 +210,9 @@ def _ingest_from_kafka(**context: Any) -> dict[str, Any]:
 
 def _ensure_silver_gold_tables(**context: Any) -> dict[str, str]:
     """Create Silver and Gold tables if they don't exist yet."""
+    from config.logging_config import get_logger
     from backend.core import snowflake_client, snowflake_pipeline
+    logger = get_logger(__name__)
     ti = context["ti"]
 
     bronze_table = ti.xcom_pull("ingest_from_kafka", key="bronze_table")
@@ -237,7 +239,9 @@ def _ensure_silver_gold_tables(**context: Any) -> dict[str, str]:
 
 def _bronze_to_silver(**context: Any) -> dict[str, int]:
     """MERGE Bronze → Silver."""
+    from config.logging_config import get_logger
     from backend.core import snowflake_pipeline
+    logger = get_logger(__name__)
     ti = context["ti"]
 
     dataset_id      = ti.xcom_pull("ingest_from_kafka",          key="dataset_id")
@@ -277,7 +281,9 @@ def _bronze_to_silver(**context: Any) -> dict[str, int]:
 
 def _silver_to_gold(**context: Any) -> int:
     """Aggregate Silver → Gold."""
+    from config.logging_config import get_logger
     from backend.core import snowflake_pipeline
+    logger = get_logger(__name__)
     ti = context["ti"]
 
     dataset_id      = ti.xcom_pull("ingest_from_kafka",         key="dataset_id")

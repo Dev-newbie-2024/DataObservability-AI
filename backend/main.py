@@ -13,6 +13,10 @@ Startup sequence:
 Shutdown sequence:
   1. Flush and close Kafka producer.
   2. Close Snowflake connection pool.
+
+Note: FastAPI-specific exception handlers are defined here (not in
+``backend.core.exceptions``) so that the core layer remains importable
+from environments that do not have FastAPI installed (e.g. Airflow).
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -33,11 +37,51 @@ from backend.core.exceptions import (
     ObservabilityError,
     SchemaInferenceError,
     UnsupportedFileTypeError,
-    dataset_exists_handler,
-    dataset_not_found_handler,
-    observability_error_handler,
-    unsupported_file_handler,
 )
+
+
+# ─── FastAPI Exception Handlers ───────────────────────────────────────────────
+# Defined here (not in backend.core.exceptions) so the core layer stays
+# framework-agnostic and importable from Airflow without FastAPI.
+
+def _error_body(error_type: str, message: str, detail: str) -> dict:
+    return {"error": error_type, "message": message, "detail": detail}
+
+
+async def dataset_not_found_handler(
+    request: Request, exc: DatasetNotFoundError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_404_NOT_FOUND,
+        content=_error_body("DatasetNotFound", exc.message, exc.detail),
+    )
+
+
+async def dataset_exists_handler(
+    request: Request, exc: DatasetAlreadyExistsError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_409_CONFLICT,
+        content=_error_body("DatasetAlreadyExists", exc.message, exc.detail),
+    )
+
+
+async def unsupported_file_handler(
+    request: Request, exc: UnsupportedFileTypeError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+        content=_error_body("UnsupportedFileType", exc.message, exc.detail),
+    )
+
+
+async def observability_error_handler(
+    request: Request, exc: ObservabilityError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content=_error_body("PlatformError", exc.message, exc.detail),
+    )
 from backend.core.kafka_producer import get_producer
 from backend.routers import datasets, health, upload
 from config.logging_config import configure_logging, get_logger
