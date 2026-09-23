@@ -37,7 +37,7 @@ from dashboard.utils.snowflake_queries import (
     get_drift_run_history,
     get_drift_score_trend,
 )
-from dashboard.utils.styles import inject_global_css, severity_color
+from dashboard.utils.styles import inject_global_css
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 inject_global_css()
