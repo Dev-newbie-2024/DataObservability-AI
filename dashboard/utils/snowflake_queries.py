@@ -857,3 +857,214 @@ def get_quality_column_metrics(
         ORDER  BY qm.column_name, qm.metric_type
         """
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Page 4 — Drift Analytics Dashboard queries
+# Tables: DRIFT_SUMMARY · DRIFT_RUNS · DRIFT_METRICS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_drift_datasets() -> list[str]:
+    """
+    Return distinct dataset IDs from DRIFT_SUMMARY for the filter widget.
+
+    Returns an empty list when no data exists or Snowflake is unavailable.
+    """
+    rows = _run(
+        f"""
+        SELECT DISTINCT dataset_id
+        FROM   {_DB}.{_OBS}.DRIFT_SUMMARY
+        WHERE  dataset_id IS NOT NULL
+        ORDER  BY dataset_id
+        """
+    )
+    return [str(r.get("DATASET_ID", "")) for r in rows if r.get("DATASET_ID")]
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_drift_kpis(dataset_id: str | None = None) -> dict[str, Any]:
+    """
+    Return aggregate + latest-row drift KPIs from DRIFT_SUMMARY.
+
+    Keys: ``total_runs``, ``detected_runs``, ``detection_rate``,
+          ``latest_score``, ``latest_severity``, ``latest_drifted_columns``,
+          ``latest_total_columns``, ``latest_drift_pct``,
+          ``avg_psi``, ``latest_evaluated_at``.
+
+    All numeric values are ``None`` when no rows exist.
+
+    Args:
+        dataset_id: If provided, restrict to ``dataset_id = dataset_id``.
+    """
+    _ds = f"AND dataset_id = '{dataset_id}'" if dataset_id else ""
+    rows = _run(
+        f"""
+        SELECT
+            COUNT(*)                                             AS total_runs,
+            COUNT_IF(drift_detected = TRUE)                      AS detected_runs,
+            AVG(CASE WHEN drift_detected = TRUE
+                     THEN 100.0 ELSE 0.0 END)                   AS detection_rate,
+            MAX_BY(drift_score,       evaluated_at)             AS latest_score,
+            MAX_BY(drift_severity,    evaluated_at)             AS latest_severity,
+            MAX_BY(drifted_columns,   evaluated_at)             AS latest_drifted_columns,
+            MAX_BY(total_columns,     evaluated_at)             AS latest_total_columns,
+            MAX_BY(drift_pct,         evaluated_at)             AS latest_drift_pct,
+            AVG(drift_score)                                     AS avg_score,
+            MAX(evaluated_at)                                    AS latest_evaluated_at
+        FROM {_DB}.{_OBS}.DRIFT_SUMMARY
+        WHERE 1=1 {_ds}
+        """
+    )
+    _empty: dict[str, Any] = {
+        "total_runs": 0, "detected_runs": 0, "detection_rate": None,
+        "latest_score": None, "latest_severity": None,
+        "latest_drifted_columns": None, "latest_total_columns": None,
+        "latest_drift_pct": None, "avg_psi": None,
+        "latest_evaluated_at": None,
+    }
+    if not rows:
+        return _empty
+    r = rows[0]
+    total = int(r.get("TOTAL_RUNS", 0) or 0)
+    if total == 0:
+        return _empty
+    return {
+        "total_runs":              total,
+        "detected_runs":           int(r.get("DETECTED_RUNS", 0) or 0),
+        "detection_rate":          _f(r, "DETECTION_RATE"),
+        "latest_score":            _f(r, "LATEST_SCORE"),
+        "latest_severity":         r.get("LATEST_SEVERITY"),
+        "latest_drifted_columns":  int(r.get("LATEST_DRIFTED_COLUMNS", 0) or 0) or None,
+        "latest_total_columns":    int(r.get("LATEST_TOTAL_COLUMNS",   0) or 0) or None,
+        "latest_drift_pct":        _f(r, "LATEST_DRIFT_PCT"),
+        "avg_psi":                 _f(r, "AVG_SCORE"),   # proxy via avg drift score
+        "latest_evaluated_at":     r.get("LATEST_EVALUATED_AT"),
+    }
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_drift_score_trend(
+    days: int = 30,
+    dataset_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Return daily avg / min / max drift score for the trend area chart.
+
+    Each item: ``day`` (str), ``avg_score``, ``min_score``, ``max_score``,
+               ``run_count`` (int), ``detected_count`` (int).
+
+    Args:
+        days: Look-back window in calendar days (default 30).
+        dataset_id: Optional filter on ``dataset_id``.
+    """
+    _ds = f"AND dataset_id = '{dataset_id}'" if dataset_id else ""
+    rows = _run(
+        f"""
+        SELECT
+            DATE(evaluated_at)              AS day,
+            AVG(drift_score)                AS avg_score,
+            MIN(drift_score)                AS min_score,
+            MAX(drift_score)                AS max_score,
+            COUNT(*)                        AS run_count,
+            COUNT_IF(drift_detected = TRUE) AS detected_count
+        FROM   {_DB}.{_OBS}.DRIFT_SUMMARY
+        WHERE  evaluated_at >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+               {_ds}
+        GROUP  BY DATE(evaluated_at)
+        ORDER  BY day ASC
+        """
+    )
+    return [
+        {
+            "day":            str(r.get("DAY", "")),
+            "avg_score":      _f(r, "AVG_SCORE") or 0.0,
+            "min_score":      _f(r, "MIN_SCORE") or 0.0,
+            "max_score":      _f(r, "MAX_SCORE") or 0.0,
+            "run_count":      int(r.get("RUN_COUNT",      0) or 0),
+            "detected_count": int(r.get("DETECTED_COUNT", 0) or 0),
+        }
+        for r in rows
+    ]
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_drift_run_history(
+    limit: int = 20,
+    dataset_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Return the most recent rows from DRIFT_RUNS for the run-history table.
+
+    Each item: ``id``, ``dataset_id``, ``overall_drift_score``,
+               ``drift_detected``, ``reference_window_start``,
+               ``reference_window_end``, ``current_window_start``,
+               ``current_window_end``, ``evaluated_at``.
+
+    Args:
+        limit: Maximum rows to return (default 20).
+        dataset_id: Optional filter on ``dataset_id``.
+    """
+    _ds = f"AND dataset_id = '{dataset_id}'" if dataset_id else ""
+    return _run(
+        f"""
+        SELECT
+            id,
+            dataset_id,
+            overall_drift_score,
+            drift_detected,
+            reference_window_start,
+            reference_window_end,
+            current_window_start,
+            current_window_end,
+            evaluated_at
+        FROM   {_DB}.{_OBS}.DRIFT_RUNS
+        WHERE  1=1 {_ds}
+        ORDER  BY evaluated_at DESC NULLS LAST
+        LIMIT  {int(limit)}
+        """
+    )
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_drift_column_metrics(
+    run_id: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """
+    Return per-column drift metric rows from DRIFT_METRICS for a specific run.
+
+    If *run_id* is ``None``, the single most-recent drift run is used.
+
+    Each item: ``column_name``, ``drift_method``, ``statistic_value``,
+               ``p_value``, ``psi_score``, ``drift_detected``, ``severity``.
+
+    Args:
+        run_id: A ``DRIFT_RUNS.id`` value, or ``None`` for the latest run.
+        limit: Maximum rows (default 50).
+    """
+    if run_id:
+        _rid = f"'{run_id}'"
+    else:
+        _rid = (
+            f"(SELECT id FROM {_DB}.{_OBS}.DRIFT_RUNS"
+            f" ORDER BY evaluated_at DESC NULLS LAST LIMIT 1)"
+        )
+    return _run(
+        f"""
+        SELECT
+            dm.column_name,
+            dm.drift_method,
+            dm.statistic_value,
+            dm.p_value,
+            dm.psi_score,
+            dm.drift_detected,
+            dm.severity
+        FROM   {_DB}.{_OBS}.DRIFT_METRICS dm
+        WHERE  dm.drift_run_id = {_rid}
+        ORDER  BY dm.psi_score DESC NULLS LAST, dm.column_name
+        LIMIT  {int(limit)}
+        """
+    )
+
