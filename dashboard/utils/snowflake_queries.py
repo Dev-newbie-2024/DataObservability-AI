@@ -1068,3 +1068,205 @@ def get_drift_column_metrics(
         """
     )
 
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Page 5 — Cost Monitoring Dashboard queries
+# Tables: COST_SUMMARY · COST_RECORDS · COST_FORECASTS · COST_BUDGETS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_cost_warehouses() -> list[str]:
+    """
+    Return distinct warehouse names from COST_SUMMARY for the filter widget.
+
+    Returns an empty list when no data exists or Snowflake is unavailable.
+    """
+    rows = _run(
+        f"""
+        SELECT DISTINCT warehouse_name
+        FROM   {_DB}.{_OBS}.COST_SUMMARY
+        WHERE  warehouse_name IS NOT NULL
+        ORDER  BY warehouse_name
+        """
+    )
+    return [str(r.get("WAREHOUSE_NAME", "")) for r in rows if r.get("WAREHOUSE_NAME")]
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_cost_kpis(warehouse: str | None = None) -> dict[str, Any]:
+    """
+    Return aggregate cost KPIs from COST_SUMMARY and COST_FORECASTS.
+
+    Keys: ``cost_score``, ``total_credits``, ``total_cost_usd``,
+          ``daily_avg_credits``, ``forecast_cost_usd``,
+          ``latest_evaluated_at``.
+
+    All numeric values are ``None`` when no rows exist.
+
+    Args:
+        warehouse: If provided, restrict COST_SUMMARY to that warehouse.
+    """
+    _wh = f"AND warehouse_name = '{warehouse}'" if warehouse else ""
+    summary_rows = _run(
+        f"""
+        SELECT
+            AVG(cost_score)                              AS avg_cost_score,
+            SUM(credits_used)                            AS total_credits,
+            SUM(cost_usd)                                AS total_cost_usd,
+            AVG(credits_used)                            AS daily_avg_credits,
+            MAX(evaluated_at)                            AS latest_evaluated_at
+        FROM {_DB}.{_OBS}.COST_SUMMARY
+        WHERE 1=1 {_wh}
+        """
+    )
+    _wh_fc = f"AND warehouse_name = '{warehouse}'" if warehouse else ""
+    forecast_rows = _run(
+        f"""
+        SELECT SUM(forecast_cost_usd) AS forecast_cost_usd
+        FROM   {_DB}.{_OBS}.COST_FORECASTS
+        WHERE  forecast_date >= CURRENT_DATE()
+               AND forecast_date <= DATEADD('day', 30, CURRENT_DATE())
+               {_wh_fc}
+        """
+    )
+    _empty: dict[str, Any] = {
+        "cost_score": None, "total_credits": None, "total_cost_usd": None,
+        "daily_avg_credits": None, "forecast_cost_usd": None,
+        "latest_evaluated_at": None,
+    }
+    r = summary_rows[0] if summary_rows else {}
+    fr = forecast_rows[0] if forecast_rows else {}
+    total_credits = _f(r, "TOTAL_CREDITS")
+    if total_credits is None:
+        return _empty
+    return {
+        "cost_score":          _f(r,  "AVG_COST_SCORE"),
+        "total_credits":       total_credits,
+        "total_cost_usd":      _f(r,  "TOTAL_COST_USD"),
+        "daily_avg_credits":   _f(r,  "DAILY_AVG_CREDITS"),
+        "forecast_cost_usd":   _f(fr, "FORECAST_COST_USD"),
+        "latest_evaluated_at": r.get("LATEST_EVALUATED_AT"),
+    }
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_cost_credit_trend(
+    days: int = 30,
+    warehouse: str | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Return daily credits and cost from COST_SUMMARY for the trend charts.
+
+    Each item: ``day`` (str), ``credits_used``, ``cost_usd``,
+               ``warehouse_name`` (str).
+
+    Args:
+        days: Look-back window in calendar days (default 30).
+        warehouse: Optional filter on ``warehouse_name``.
+    """
+    _wh = f"AND warehouse_name = '{warehouse}'" if warehouse else ""
+    rows = _run(
+        f"""
+        SELECT
+            DATE(evaluated_at)     AS day,
+            warehouse_name,
+            SUM(credits_used)      AS credits_used,
+            SUM(cost_usd)          AS cost_usd
+        FROM   {_DB}.{_OBS}.COST_SUMMARY
+        WHERE  evaluated_at >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+               {_wh}
+        GROUP  BY DATE(evaluated_at), warehouse_name
+        ORDER  BY day ASC
+        """
+    )
+    return [
+        {
+            "day":            str(r.get("DAY", "")),
+            "warehouse_name": str(r.get("WAREHOUSE_NAME", "unknown")),
+            "credits_used":   _f(r, "CREDITS_USED") or 0.0,
+            "cost_usd":       _f(r, "COST_USD") or 0.0,
+        }
+        for r in rows
+    ]
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_cost_records(
+    limit: int = 20,
+    warehouse: str | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Return the most recent rows from COST_RECORDS for the history table.
+
+    Each item: ``id``, ``warehouse_name``, ``service_type``,
+               ``credits_used``, ``cost_usd``, ``usage_date``, ``created_at``.
+
+    Args:
+        limit: Maximum rows to return (default 20).
+        warehouse: Optional filter on ``warehouse_name``.
+    """
+    _wh = f"AND warehouse_name = '{warehouse}'" if warehouse else ""
+    return _run(
+        f"""
+        SELECT
+            id,
+            warehouse_name,
+            service_type,
+            credits_used,
+            cost_usd,
+            usage_date,
+            created_at
+        FROM   {_DB}.{_OBS}.COST_RECORDS
+        WHERE  1=1 {_wh}
+        ORDER  BY usage_date DESC NULLS LAST, created_at DESC NULLS LAST
+        LIMIT  {int(limit)}
+        """
+    )
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_cost_forecasts(
+    warehouse: str | None = None,
+    days_ahead: int = 30,
+) -> list[dict[str, Any]]:
+    """
+    Return forecast rows from COST_FORECASTS for the next *days_ahead* days.
+
+    Each item: ``forecast_date`` (str), ``warehouse_name``,
+               ``forecast_credits``, ``forecast_cost_usd``,
+               ``confidence_lower``, ``confidence_upper``.
+
+    Args:
+        warehouse: Optional filter on ``warehouse_name``.
+        days_ahead: How many days ahead to include (default 30).
+    """
+    _wh = f"AND warehouse_name = '{warehouse}'" if warehouse else ""
+    rows = _run(
+        f"""
+        SELECT
+            forecast_date,
+            warehouse_name,
+            forecast_credits,
+            forecast_cost_usd,
+            confidence_lower,
+            confidence_upper
+        FROM   {_DB}.{_OBS}.COST_FORECASTS
+        WHERE  forecast_date >= CURRENT_DATE()
+               AND forecast_date <= DATEADD('day', {int(days_ahead)}, CURRENT_DATE())
+               {_wh}
+        ORDER  BY forecast_date ASC
+        """
+    )
+    return [
+        {
+            "forecast_date":     str(r.get("FORECAST_DATE", "")),
+            "warehouse_name":    str(r.get("WAREHOUSE_NAME", "unknown")),
+            "forecast_credits":  _f(r, "FORECAST_CREDITS") or 0.0,
+            "forecast_cost_usd": _f(r, "FORECAST_COST_USD") or 0.0,
+            "confidence_lower":  _f(r, "CONFIDENCE_LOWER") or 0.0,
+            "confidence_upper":  _f(r, "CONFIDENCE_UPPER") or 0.0,
+        }
+        for r in rows
+    ]
