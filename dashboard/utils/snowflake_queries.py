@@ -1270,3 +1270,218 @@ def get_cost_forecasts(
         }
         for r in rows
     ]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Page 6 — Self-Healing Dashboard queries
+# Tables: HEAL_SUMMARY · HEAL_RUNS · HEAL_ACTIONS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_heal_kpis() -> dict[str, Any]:
+    """
+    Return aggregate self-healing KPIs from HEAL_SUMMARY.
+
+    Keys
+    ----
+    total          : int   — total heal events recorded
+    resolved       : int   — recovery_status = 'RESOLVED'
+    failed         : int   — recovery_status = 'FAILED'
+    escalated      : int   — recovery_status = 'ESCALATED'
+    quarantined    : int   — quarantined = TRUE
+    recovery_rate  : float | None — resolved / total * 100
+    avg_mttr       : float | None — average mttr_seconds
+    latest_eval    : str   | None — most recent evaluated_at
+    """
+    rows = _run(
+        f"""
+        SELECT
+            COUNT(*)                                              AS total,
+            COUNT_IF(UPPER(recovery_status) = 'RESOLVED')        AS resolved,
+            COUNT_IF(UPPER(recovery_status) = 'FAILED')          AS failed,
+            COUNT_IF(UPPER(recovery_status) = 'ESCALATED')       AS escalated,
+            COUNT_IF(quarantined = TRUE)                         AS quarantined,
+            AVG(mttr_seconds)                                    AS avg_mttr,
+            MAX(evaluated_at)                                    AS latest_eval
+        FROM {_DB}.{_OBS}.HEAL_SUMMARY
+        """
+    )
+    _empty: dict[str, Any] = {
+        "total": 0, "resolved": 0, "failed": 0, "escalated": 0,
+        "quarantined": 0, "recovery_rate": None,
+        "avg_mttr": None, "latest_eval": None,
+    }
+    if not rows:
+        return _empty
+    r = rows[0]
+    total = int(r.get("TOTAL", 0) or 0)
+    if total == 0:
+        return _empty
+    resolved = int(r.get("RESOLVED", 0) or 0)
+    return {
+        "total":         total,
+        "resolved":      resolved,
+        "failed":        int(r.get("FAILED",     0) or 0),
+        "escalated":     int(r.get("ESCALATED",  0) or 0),
+        "quarantined":   int(r.get("QUARANTINED", 0) or 0),
+        "recovery_rate": round(resolved / total * 100, 1),
+        "avg_mttr":      _f(r, "AVG_MTTR"),
+        "latest_eval":   r.get("LATEST_EVAL"),
+    }
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_heal_failure_distribution() -> list[dict[str, Any]]:
+    """
+    Return failure-type counts from HEAL_SUMMARY.
+
+    Each item: ``failure_type`` (str), ``count`` (int).
+    Ordered by count descending.
+    """
+    rows = _run(
+        f"""
+        SELECT
+            UPPER(failure_type) AS failure_type,
+            COUNT(*)            AS cnt
+        FROM   {_DB}.{_OBS}.HEAL_SUMMARY
+        WHERE  failure_type IS NOT NULL
+        GROUP  BY UPPER(failure_type)
+        ORDER  BY cnt DESC
+        """
+    )
+    return [
+        {
+            "failure_type": str(r.get("FAILURE_TYPE", "UNKNOWN")),
+            "count":        int(r.get("CNT", 0) or 0),
+        }
+        for r in rows
+    ]
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_heal_trend(days: int = 30) -> list[dict[str, Any]]:
+    """
+    Return daily heal counts and recovery rates from HEAL_SUMMARY.
+
+    Each item: ``day`` (str), ``total`` (int), ``resolved`` (int),
+               ``failed`` (int), ``escalated`` (int),
+               ``recovery_rate`` (float 0–100).
+
+    Args:
+        days: Look-back window in calendar days (default 30).
+    """
+    rows = _run(
+        f"""
+        SELECT
+            DATE(evaluated_at)                                        AS day,
+            COUNT(*)                                                  AS total,
+            COUNT_IF(UPPER(recovery_status) = 'RESOLVED')            AS resolved,
+            COUNT_IF(UPPER(recovery_status) = 'FAILED')              AS failed,
+            COUNT_IF(UPPER(recovery_status) = 'ESCALATED')           AS escalated,
+            AVG(mttr_seconds)                                        AS avg_mttr
+        FROM   {_DB}.{_OBS}.HEAL_SUMMARY
+        WHERE  evaluated_at >= DATEADD('day', -{int(days)}, CURRENT_TIMESTAMP())
+        GROUP  BY DATE(evaluated_at)
+        ORDER  BY day ASC
+        """
+    )
+    result = []
+    for r in rows:
+        total   = int(r.get("TOTAL",    0) or 0)
+        resolved= int(r.get("RESOLVED", 0) or 0)
+        result.append({
+            "day":           str(r.get("DAY", "")),
+            "total":         total,
+            "resolved":      resolved,
+            "failed":        int(r.get("FAILED",    0) or 0),
+            "escalated":     int(r.get("ESCALATED", 0) or 0),
+            "recovery_rate": round(resolved / total * 100, 1) if total > 0 else 0.0,
+            "avg_mttr":      _f(r, "AVG_MTTR") or 0.0,
+        })
+    return result
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_heal_run_history(
+    limit: int = 20,
+    failure_type: str | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Return recent rows from HEAL_SUMMARY for the history table.
+
+    Each item: ``id``, ``dataset_id``, ``pipeline_run_id``,
+               ``failure_type``, ``healing_strategy``,
+               ``recovery_status``, ``retry_count``,
+               ``mttr_seconds``, ``actions_taken``,
+               ``actions_succeeded``, ``quarantined``, ``evaluated_at``.
+
+    Args:
+        limit: Maximum rows (default 20).
+        failure_type: Optional filter (CONNECTION/QUALITY/DRIFT/SYSTEM).
+    """
+    _ft = (
+        f"AND UPPER(failure_type) = '{failure_type.upper()}'"
+        if failure_type else ""
+    )
+    return _run(
+        f"""
+        SELECT
+            id,
+            dataset_id,
+            pipeline_run_id,
+            UPPER(failure_type)    AS failure_type,
+            healing_strategy,
+            UPPER(recovery_status) AS recovery_status,
+            retry_count,
+            mttr_seconds,
+            actions_taken,
+            actions_succeeded,
+            quarantined,
+            evaluated_at
+        FROM   {_DB}.{_OBS}.HEAL_SUMMARY
+        WHERE  1=1 {_ft}
+        ORDER  BY evaluated_at DESC NULLS LAST
+        LIMIT  {int(limit)}
+        """
+    )
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_heal_action_history(
+    heal_run_id: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """
+    Return action rows from HEAL_ACTIONS for a specific run or recent actions.
+
+    Each item: ``id``, ``heal_run_id``, ``action_type``,
+               ``action_detail``, ``success``, ``executed_at``.
+
+    Args:
+        heal_run_id: Filter to a specific HEAL_RUNS.id; if None uses the
+                     most recent run.
+        limit: Maximum rows (default 50).
+    """
+    if heal_run_id:
+        _rid = f"'{heal_run_id}'"
+    else:
+        _rid = (
+            f"(SELECT id FROM {_DB}.{_OBS}.HEAL_RUNS"
+            f" ORDER BY created_at DESC NULLS LAST LIMIT 1)"
+        )
+    return _run(
+        f"""
+        SELECT
+            ha.id,
+            ha.heal_run_id,
+            ha.action_type,
+            ha.action_detail,
+            ha.success,
+            ha.executed_at
+        FROM   {_DB}.{_OBS}.HEAL_ACTIONS ha
+        WHERE  ha.heal_run_id = {_rid}
+        ORDER  BY ha.executed_at ASC NULLS LAST
+        LIMIT  {int(limit)}
+        """
+    )
