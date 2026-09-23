@@ -1,9 +1,14 @@
 # ════════════════════════════════════════════════════════════════════════════
 # DataObservability-AI — Docker Compose
-# Services: kafka, kafka-ui, airflow-init, airflow-webserver,
-#           airflow-scheduler, backend, agents, dashboard
+# Services: postgres (airflow metadata), kafka, kafka-ui,
+#           airflow-init, airflow-webserver, airflow-scheduler,
+#           backend, agents, dashboard
 # ════════════════════════════════════════════════════════════════════════════
 
+# ─── Airflow common anchor ────────────────────────────────────────────────────
+# Shared by airflow-init, airflow-webserver, airflow-scheduler.
+# Uses the official apache/airflow:2.9.3-python3.12 image built from
+# airflow/Dockerfile with LocalExecutor + PostgreSQL metadata backend.
 x-airflow-common: &airflow-common
   build:
     context: .
@@ -11,21 +16,26 @@ x-airflow-common: &airflow-common
   env_file:
     - .env
   environment:
+    # ── Core ──────────────────────────────────────────────────────────────
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/airflow.db
-    AIRFLOW__CORE__FERNET_KEY: ""
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY:-}
+    # ── Database — PostgreSQL metadata backend ─────────────────────────────
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    # ── Webserver ─────────────────────────────────────────────────────────
     AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY:-change_me_in_production}
+    # ── API auth ──────────────────────────────────────────────────────────
     AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+    # ── Python path — allows DAGs to import backend/config packages ───────
     PYTHONPATH: /opt/airflow
-    # Snowflake connection (used by DAGs via hooks)
+    # ── Snowflake connection (used by DAGs via hooks) ─────────────────────
     SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT}
     SNOWFLAKE_USER: ${SNOWFLAKE_USER}
     SNOWFLAKE_PASSWORD: ${SNOWFLAKE_PASSWORD}
     SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE:-OBSERVABILITY_DB}
     SNOWFLAKE_WAREHOUSE: ${SNOWFLAKE_WAREHOUSE:-COMPUTE_WH}
     SNOWFLAKE_ROLE: ${SNOWFLAKE_ROLE:-SYSADMIN}
-    # Kafka connection
+    # ── Kafka connection ──────────────────────────────────────────────────
     KAFKA_BOOTSTRAP_SERVERS: kafka:9092
   volumes:
     - ./airflow/dags:/opt/airflow/dags
@@ -33,11 +43,12 @@ x-airflow-common: &airflow-common
     - ./airflow/sensors:/opt/airflow/sensors
     - ./airflow/hooks:/opt/airflow/hooks
     - ./airflow/plugins:/opt/airflow/plugins
+    - ./airflow/logs:/opt/airflow/logs
+    - ./backend:/opt/airflow/backend
     - ./config:/opt/airflow/config
-    - ./ai_agents:/opt/airflow/ai_agents
-    - airflow-logs:/opt/airflow/logs
-    - airflow-db:/opt/airflow
   depends_on:
+    postgres:
+      condition: service_healthy
     kafka:
       condition: service_healthy
   networks:
@@ -123,22 +134,44 @@ services:
     networks:
       - observability-net
 
+  # ─── PostgreSQL — Airflow metadata database (internal only) ─────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: obs_airflow_postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - observability-net
+    restart: unless-stopped
+
   # ─── Airflow Init (one-shot) ───────────────────────────────────────────────
   airflow-init:
     <<: *airflow-common
     container_name: obs_airflow_init
-    entrypoint: >
-      /bin/bash -c "
-      airflow db migrate &&
-      airflow users create
-        --username ${_AIRFLOW_WWW_USER_USERNAME:-admin}
-        --password ${_AIRFLOW_WWW_USER_PASSWORD:-admin}
-        --firstname Admin
-        --lastname User
-        --role Admin
-        --email admin@example.com
-        2>/dev/null || true &&
-      echo 'Airflow init complete.'
+    # Passes commands to the official /entrypoint which activates the Airflow
+    # virtualenv before executing. No custom entrypoint required.
+    command: >
+      bash -c "
+        airflow db migrate &&
+        airflow users create
+          --username $${_AIRFLOW_WWW_USER_USERNAME:-admin}
+          --password $${_AIRFLOW_WWW_USER_PASSWORD:-admin}
+          --firstname Admin
+          --lastname User
+          --role Admin
+          --email admin@example.com
+          2>/dev/null || true &&
+        echo 'Airflow init complete.'
       "
     restart: "no"
 
@@ -147,7 +180,7 @@ services:
     <<: *airflow-common
     container_name: obs_airflow_webserver
     ports:
-      - "8080:8080"
+      - "8081:8080"
     command: webserver
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -158,6 +191,8 @@ services:
     depends_on:
       airflow-init:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
       kafka:
         condition: service_healthy
     restart: unless-stopped
@@ -168,7 +203,8 @@ services:
     container_name: obs_airflow_scheduler
     command: scheduler
     healthcheck:
-      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname \"$${HOSTNAME}\""]
+      # --allow-multiple is required in Airflow 2.9+ when scheduler is restarted
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --allow-multiple || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -176,6 +212,8 @@ services:
     depends_on:
       airflow-init:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
       kafka:
         condition: service_healthy
     restart: unless-stopped
@@ -199,7 +237,7 @@ services:
       kafka:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 20s
       timeout: 5s
       retries: 5
@@ -249,6 +287,7 @@ services:
       - .env
     environment:
       BACKEND_URL: http://backend:8000
+      AIRFLOW_URL: http://localhost:8081
     volumes:
       - ./dashboard:/app/dashboard
     depends_on:
@@ -274,7 +313,5 @@ networks:
 volumes:
   kafka-data:
     name: obs_kafka_data
-  airflow-logs:
-    name: obs_airflow_logs
-  airflow-db:
-    name: obs_airflow_db
+  airflow-pg:
+    name: obs_airflow_pg

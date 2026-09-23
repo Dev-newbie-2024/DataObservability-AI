@@ -1,3 +1,6 @@
+# ─── Pre-downloaded wheel cache (populated by scripts/download-airflow-wheels.ps1) ─
+airflow/wheels/
+
 # ─── Python ──────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]

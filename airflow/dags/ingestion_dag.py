@@ -51,39 +51,31 @@ if _PROJECT_ROOT not in sys.path:
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-
 from airflow.operators.empty import EmptyOperator
 from airflow.utils.dates import days_ago
-
-from airflow.operators.python import PythonOperator
-from airflow.operators.empty import EmptyOperator
-
 from airflow.operators.python import BranchPythonOperator
 
+# config.constants is import-safe: no env reads, no pydantic validation.
+# config.logging_config is intentionally NOT imported at module level because
+# it calls configure_logging() on import, which instantiates pydantic-settings
+# models (including SnowflakeSettings with required fields). If those env vars
+# are absent when the Airflow scheduler parses this file, a ValidationError
+# would break the DAG. All logging is therefore done lazily inside callables.
 from config.constants import DagId, KafkaTopic
-from config.logging_config import get_logger
-from airflow.operators.empty import EmptyOperator
-
-logger = get_logger(__name__)
 
 
 # ─── Callback functions ───────────────────────────────────────────────────────
 
 def _on_task_failure(context: dict[str, Any]) -> None:
     """Callback executed when any task fails after all retries are exhausted."""
-    import sys
-    import os
-    _PROJECT_ROOT = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..")
-    )
-    if _PROJECT_ROOT not in sys.path:
-        sys.path.insert(0, _PROJECT_ROOT)
+    from config.logging_config import get_logger
+    _logger = get_logger(__name__)
 
     task_id   = context.get("task_instance", {}).task_id if context.get("task_instance") else "unknown"
     run_id    = context.get("run_id", "unknown")
     exception = context.get("exception")
 
-    logger.error(
+    _logger.error(
         "Airflow task failed",
         task_id=task_id,
         run_id=run_id,
@@ -101,7 +93,7 @@ def _on_task_failure(context: dict[str, Any]) -> None:
                 error_message=str(exception) if exception else "Airflow task failure",
             )
     except Exception as exc:
-        logger.warning("Could not update pipeline run on failure", error=str(exc))
+        _logger.warning("Could not update pipeline run on failure", error=str(exc))
 
 
 # ─── Default arguments ────────────────────────────────────────────────────────
@@ -123,7 +115,9 @@ _DEFAULT_ARGS = {
 
 def _bootstrap_topics(**context: Any) -> None:
     """Ensure all required Kafka topics exist. Skips gracefully if Kafka is down."""
+    from config.logging_config import get_logger
     from backend.core.kafka_admin import ensure_topics
+    logger = get_logger(__name__)
     results = ensure_topics(max_retries=3, retry_delay=5.0)
     logger.info("Kafka topic bootstrap complete", results=results)
 
@@ -133,7 +127,9 @@ def _check_has_messages(**context: Any) -> str:
     Branch task: check if there are messages waiting on the topic.
     Returns task_id to execute next.
     """
+    from config.logging_config import get_logger
     from backend.core.kafka_consumer import get_topic_lag
+    logger = get_logger(__name__)
     lag = get_topic_lag(KafkaTopic.RAW_DATA_EVENTS, group_id="airflow-ingestion")
     if lag == 0:
         logger.info("No messages in topic — skipping ingestion run")
@@ -344,6 +340,8 @@ def _publish_pipeline_complete(**context: Any) -> str:
         },
         dataset_id=dataset_id,
     )
+    from config.logging_config import get_logger
+    logger = get_logger(__name__)
     logger.info("Pipeline complete event published", event_id=event_id, dataset_id=dataset_id)
     return event_id
 
@@ -362,6 +360,8 @@ def _update_pipeline_status(**context: Any) -> None:
             status="success",
             rows_ingested=rows_ingested,
         )
+        from config.logging_config import get_logger
+        logger = get_logger(__name__)
         logger.info("Pipeline run marked success", pipeline_run_id=pipeline_run_id)
 
 

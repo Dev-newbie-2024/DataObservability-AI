@@ -5,7 +5,12 @@ Streamlit multi-page application entry point.
 Placeholder — full page implementation in Phase 5.
 """
 
+import os
 import streamlit as st
+
+# Single source of truth for the Airflow web UI URL.
+# Override via the AIRFLOW_URL environment variable (set in docker-compose / .env).
+_AIRFLOW_URL: str = os.environ.get("AIRFLOW_URL", "http://localhost:8081")
 
 # ─── Page Config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -85,7 +90,7 @@ link_col1, link_col2, link_col3, link_col4 = st.columns(4)
 with link_col1:
     st.link_button("FastAPI Docs", "http://localhost:8000/docs", use_container_width=True)
 with link_col2:
-    st.link_button("Airflow UI", "http://localhost:8080", use_container_width=True)
+    st.link_button("Airflow UI", _AIRFLOW_URL, use_container_width=True)
 with link_col3:
     st.link_button("Kafka UI", "http://localhost:8090", use_container_width=True)
 with link_col4:

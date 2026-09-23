@@ -13,26 +13,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install all agent packages
+# Install lightweight / connector packages first
 RUN pip install --upgrade pip && \
-    pip install --no-cache-dir --prefix=/install \
-        pydantic>=2.7.0 \
-        pydantic-settings>=2.3.0 \
-        python-dotenv>=1.0.0 \
-        structlog>=24.2.0 \
-        tenacity>=8.3.0 \
-        snowflake-connector-python>=3.10.0 \
+    pip install --no-cache-dir --prefer-binary --timeout 300 --retries 10 \
+        --prefix=/install \
+        "pydantic>=2.7.0" \
+        "pydantic-settings>=2.3.0" \
+        "python-dotenv>=1.0.0" \
+        "structlog>=24.2.0" \
+        "tenacity>=8.3.0" \
+        "snowflake-connector-python>=3.10.0" \
         "confluent-kafka>=2.4.0" \
-        pandas>=2.2.0 \
-        numpy>=1.26.0 \
-        pyarrow>=16.0.0 \
-        scipy>=1.13.0 \
-        great-expectations>=0.18.0 \
-        evidently>=0.4.30 \
-        prophet>=1.1.5 \
-        httpx>=0.27.0 \
-        fastapi>=0.111.0 \
+        "pandas>=2.2.0" \
+        "numpy>=1.26.0" \
+        "pyarrow>=16.0.0" \
+        "httpx>=0.27.0" \
+        "fastapi>=0.111.0" \
         "uvicorn[standard]>=0.30.0"
+
+# Install heavy analytics libraries in a separate layer so a timeout here
+# only retries these packages, not the entire install above.
+RUN pip install --no-cache-dir --prefer-binary --timeout 300 --retries 10 \
+        --prefix=/install \
+        "scipy>=1.13.0" \
+        "great-expectations>=0.18.0" \
+        "evidently>=0.4.30" \
+        "prophet>=1.1.5"
 
 # ─── Stage 2: Runtime ─────────────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime

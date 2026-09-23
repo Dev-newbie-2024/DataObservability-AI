@@ -1,3 +1,1 @@
-"""
-airflow/operators/__init__.py
-"""
+# operators package namespace marker
